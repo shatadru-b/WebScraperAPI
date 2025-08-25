@@ -1,75 +1,132 @@
+# scraper.py
+from duckduckgo_search import DDGS
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import unquote, urlparse, parse_qs
-from newspaper import Article
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from googlesearch import search  # from package: googlesearch-python
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                  "AppleWebKit/537.36 (KHTML, like Gecko) "
-                  "Chrome/92.0.4515.131 Safari/537.36"
+# --- Config ---
+MIN_CONTENT_CHARS = 300  # discard thin/spammy pages
+USER_AGENT = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+# Domains/patterns that are almost certainly ads or tracking
+AD_HOST_FRAGMENTS = (
+    "googlesyndication.", "googleadservices.", "doubleclick.",
+    "g.doubleclick.", "adservice.google.", "tpc.googlesyndication.",
+    "adsystem.", "adnxs.", "taboola.", "outbrain.", "bing.com/aclick",
+)
+# Optional: block social/retail sites if you only want articles
+OPTIONAL_BLOCKED_DOMAINS = (
+    "facebook.", "pinterest.", "linkedin.", "twitter.", "x.com",
+    "instagram.", "youtube.", "youtu.be", "amazon.", "ebay.",
+    "quora.", "reddit.", "news.google.", "webcache.googleusercontent.com",
+)
+
+TRACKING_QUERY_KEYS = {
+    "gclid", "gbraid", "wbraid", "fbclid", "msclkid",
+    "igshid", "yclid", "spm", "scid", "ref", "ref_src"
 }
 
 
-def clean_duckduckgo_url(url: str) -> str:
-    """Extract the real target URL from DuckDuckGo redirect links."""
-    parsed = urlparse(url)
-    if parsed.netloc == "duckduckgo.com" and parsed.path.startswith("/l/"):
-        qs = parse_qs(parsed.query)
-        if "uddg" in qs:
-            return unquote(qs["uddg"][0])
-    return url
-
-
-def fetch_article_content(url: str) -> str:
-    """
-    Extract meaningful article text using newspaper3k,
-    fallback to BeautifulSoup if parsing fails.
-    """
+# --- Utility: strip common tracking params (keeps the useful URL) ---
+def strip_tracking_params(url: str) -> str:
     try:
-        article = Article(url)
-        article.download()
-        article.parse()
-        article.nlp()  # Extract summary/keywords
-        return article.text.strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return url
+        qs = parse_qs(parsed.query, keep_blank_values=True)
+
+        # drop utm_* and known tracking keys
+        filtered = {
+            k: v for k, v in qs.items()
+            if not (k.startswith("utm_") or k in TRACKING_QUERY_KEYS)
+        }
+        new_q = urlencode(filtered, doseq=True)
+        return urlunparse(parsed._replace(query=new_q))
     except Exception:
-        # Fallback: simple readability-based scrape
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=10)
-            soup = BeautifulSoup(resp.text, "html.parser")
+        return url
 
-            # Keep only meaningful tags
-            for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form"]):
-                tag.decompose()
 
-            paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
-            content = " ".join(paragraphs)
+# --- Utility: Check if URL is ad/sponsored/tracking ---
+def is_ad_url(url: str) -> bool:
+    """
+    Return True if URL is likely an advertisement, sponsored, or tracking redirect.
+    """
+    # Non-http(s) → skip
+    if not url.startswith(("http://", "https://")):
+        return True
 
-            return content[:5000].strip()  # limit size
-        except Exception:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    query = parsed.query.lower()
+
+    # Known ad/tracking hosts/patterns
+    if any(fragment in host or fragment in url.lower() for fragment in AD_HOST_FRAGMENTS):
+        return True
+
+    # Google internal redirect/ads endpoints
+    if host.endswith("google.com"):
+        # /aclk is an ad click, /url with adurl=, /ads etc.
+        if path.startswith("/aclk") or "adurl=" in query or path.startswith("/ads"):
+            return True
+
+    # Obvious script/asset files
+    if path.endswith((".js", ".css")):
+        return True
+
+    # Optionally block social/retail (uncomment if desired)
+    if any(b in host for b in OPTIONAL_BLOCKED_DOMAINS):
+        return True
+
+    return False
+
+
+# --- Function: Scrape content from a single URL ---
+def scrape_url(url: str, max_chars: int = 2000) -> str:
+    try:
+        response = requests.get(url, timeout=12, headers=USER_AGENT)
+        if response.status_code != 200:
             return ""
 
+        soup = BeautifulSoup(response.text, "html.parser")
 
-def search_and_scrape(query: str, limit: int = 3):
-    """
-    Search DuckDuckGo for a query, visit top links, and extract article content.
-    """
-    search_url = f"https://duckduckgo.com/html/?q={query}"
-    resp = requests.get(search_url, headers=HEADERS, timeout=10)
-    soup = BeautifulSoup(resp.text, "html.parser")
+        # Extract text content from paragraphs
+        paragraphs = soup.find_all("p")
+        content = " ".join(p.get_text(" ", strip=True) for p in paragraphs)
 
-    results = []
-    for idx, a in enumerate(soup.select(".result__a"), start=1):
-        if idx > limit:
-            break
-        title = a.get_text()
-        raw_url = a.get("href")
-        url = clean_duckduckgo_url(raw_url)
-        content = fetch_article_content(url)
+        # Limit size of content
+        content = content.strip()
+        return content[:max_chars] if content else ""
+    except Exception:
+        return ""
 
-        results.append({
-            "title": title,
-            "url": url,
-            "content": content
-        })
 
-    return results
+# --- Function: Search and scrape results for a query (Google) ---
+def search_and_scrape(query: str, max_results: int = 5, max_chars: int = 2000) -> str:
+    results_data = []
+
+    with DDGS() as ddgs:
+        results = ddgs.text(query, max_results=max_results * 2)
+
+        count = 0
+        for r in results:
+            url = r.get("href") or r.get("url")
+            title = r.get("title", "No title")
+
+            if not url or is_ad_url(url):
+                continue
+
+            content = scrape_url(url, max_chars=max_chars)
+            if content:
+                results_data.append({
+                    "title": title,
+                    "url": url,
+                    "content": content
+                })
+                count += 1
+
+            if count >= max_results:
+                break
+
+    return results_data
