@@ -1,5 +1,7 @@
 # scraper.py
-from duckduckgo_search import DDGS
+from serpapi import GoogleSearch
+from dotenv import load_dotenv
+load_dotenv()
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
@@ -105,28 +107,29 @@ def scrape_url(url: str, max_chars: int = 2000) -> str:
 # --- Function: Search and scrape results for a query (Google) ---
 def search_and_scrape(query: str, max_results: int = 5, max_chars: int = 2000) -> str:
     results_data = []
-
-    with DDGS() as ddgs:
-        results = ddgs.text(query, max_results=max_results * 2)
-
-        count = 0
-        for r in results:
-            url = r.get("href") or r.get("url")
-            title = r.get("title", "No title")
-
-            if not url or is_ad_url(url):
-                continue
-
-            content = scrape_url(url, max_chars=max_chars)
-            if content:
-                results_data.append({
-                    "title": title,
-                    "url": url,
-                    "content": content
-                })
-                count += 1
-
-            if count >= max_results:
-                break
-
+    import os
+    SERPAPI_KEY = os.getenv("SERPAPI_KEY", "YOUR_SERPAPI_KEY")  # Replace with your key or set as env var
+    params = {
+        "q": query,
+        "num": max_results,
+        "api_key": SERPAPI_KEY
+    }
+    search = GoogleSearch(params)
+    result = search.get_dict()
+    count = 0
+    for r in result.get("organic_results", []):
+        url = r.get("link")
+        title = r.get("title", "No title")
+        if not url or ("is_ad_url" in globals() and is_ad_url(url)):
+            continue
+        content = scrape_url(url, max_chars=max_chars)
+        if content:
+            results_data.append({
+                "title": title,
+                "url": url,
+                "content": content
+            })
+            count += 1
+        if count >= max_results:
+            break
     return results_data
