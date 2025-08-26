@@ -108,15 +108,16 @@ def scrape_url(url: str, max_chars: int = 2000) -> str:
 def search_and_scrape(query: str, max_results: int = 5, max_chars: int = 2000) -> str:
     results_data = []
     import os
-    SERPAPI_KEY = os.getenv("SERPAPI_KEY", "YOUR_SERPAPI_KEY")  # Replace with your key or set as env var
+    SERPAPI_KEY = os.getenv("SERPAPI_KEY", "SERPAPI_KEY")
+    # Fetch more results than needed to account for filtering
+    fetch_count = max_results * 3
     params = {
         "q": query,
-        "num": max_results,
+        "num": fetch_count,
         "api_key": SERPAPI_KEY
     }
     search = GoogleSearch(params)
     result = search.get_dict()
-    count = 0
     for r in result.get("organic_results", []):
         url = r.get("link")
         title = r.get("title", "No title")
@@ -129,7 +130,6 @@ def search_and_scrape(query: str, max_results: int = 5, max_chars: int = 2000) -
                 "url": url,
                 "content": content
             })
-            count += 1
-        if count >= max_results:
+        if len(results_data) >= max_results:
             break
     return results_data
