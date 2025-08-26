@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 import os
 from scraper import search_and_scrape
 
@@ -18,15 +18,15 @@ def search(query: str, limit: int = 3):
     """
     # Run the scraper
     results = search_and_scrape(query, limit)
+    return JSONResponse(content={"results": results})
 
-    # Save results into a text file
-    file_path = os.path.join(OUTPUT_DIR, f"{query}.txt")
-    with open(file_path, "w", encoding="utf-8") as f:
-        for idx, r in enumerate(results, start=1):
-            f.write(f"--- Result {idx} ---\n")
-            f.write(f"Title: {r['title']}\n")
-            f.write(f"URL: {r['url']}\n\n")
-            f.write(f"Content:\n{r['content']}\n\n")
-            f.write("=" * 80 + "\n\n")
-
-    return FileResponse(file_path, media_type="text/plain", filename=f"{query}.txt")
+    # --- Download as text file (commented out) ---
+    # file_path = os.path.join(OUTPUT_DIR, f"{query}.txt")
+    # with open(file_path, "w", encoding="utf-8") as f:
+    #     for idx, r in enumerate(results, start=1):
+    #         f.write(f"--- Result {idx} ---\n")
+    #         f.write(f"Title: {r['title']}\n")
+    #         f.write(f"URL: {r['url']}\n\n")
+    #         f.write(f"Content:\n{r['content']}\n\n")
+    #         f.write("=" * 80 + "\n\n")
+    # return FileResponse(file_path, media_type="text/plain", filename=f"{query}.txt")
