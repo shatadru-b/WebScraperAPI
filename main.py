@@ -10,7 +10,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 @app.get("/searchfor/{query}")
-def search(query: str, limit: int = 3):
+def search(query: str, limit: int = 20):
     """
     API endpoint:
     Example: http://localhost:1234/searchfor/cricket?limit=2

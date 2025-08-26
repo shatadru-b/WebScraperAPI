@@ -85,7 +85,7 @@ def is_ad_url(url: str) -> bool:
 
 
 # --- Function: Scrape content from a single URL ---
-def scrape_url(url: str, max_chars: int = 2000) -> str:
+def scrape_url(url: str, max_chars: int = 5000) -> str:
     try:
         response = requests.get(url, timeout=12, headers=USER_AGENT)
         if response.status_code != 200:
